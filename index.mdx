@@ -5,15 +5,17 @@ description: "Pay per HTTP request in Canton Coin. No API keys, no accounts — 
 
 x402 brings the `402 Payment Required` HTTP standard to Canton Network. A client
 calls an endpoint, receives a `402` with payment requirements, pays on-ledger in
-Canton Coin, and retries — the payment itself is the credential. No API keys, no
-billing accounts.
+Canton Coin or a CIP-56 registry token (e.g. USDCx), and retries — the payment
+itself is the credential. No API keys, no billing accounts.
 
 On Canton, the `exact` scheme settles via the CIP-56 `transfer-factory` method:
 the payer signs a `TransferFactory_Transfer` naming the merchant as receiver but
 does **not** submit it. The facilitator relays the signed transfer and pays the
 network traffic fee, and because the merchant holds a standing
 `TransferPreapproval`, it settles directly to the merchant in a single
-transaction — no escrow, no lock step, no facilitator custody.
+transaction — no escrow, no lock step, no facilitator custody. Canton Coin and
+any CIP-56 registry token share the same flow and differ only by the instrument
+(`extra.instrumentId`).
 
 ## Start here
 
@@ -25,6 +27,6 @@ transaction — no escrow, no lock step, no facilitator custody.
     Pay x402-gated endpoints from an agent or backend service.
   </Card>
   <Card title="Merchant integration" icon="store" href="/x402-merchant">
-    Charge Canton Coin per request on your Express or Next.js API.
+    Charge Canton Coin or a CIP-56 token per request on your Express or Next.js API.
   </Card>
 </CardGroup>

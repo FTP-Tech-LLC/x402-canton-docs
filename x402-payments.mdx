@@ -1,11 +1,13 @@
 ---
 title: "x402 HTTP Payments"
-description: "Gate any HTTP endpoint behind Canton Coin payments using the x402 protocol and the exact scheme."
+description: "Gate any HTTP endpoint behind Canton Coin or CIP-56 token payments using the x402 protocol and the exact scheme."
 ---
 
 The [x402 protocol](https://x402.org) is an HTTP payment standard built around the `402 Payment Required` status code. A server responds with payment requirements; the client pays on-chain and retries. There are no API keys and no billing accounts; the payment itself is the credential.
 
-On Canton Network, x402 uses the `exact` scheme with the `transfer-factory` settlement method (a CIP-56 Token Standard transfer). The client signs a `TransferFactory_Transfer` naming the merchant as receiver but does **not** submit it; the facilitator relays the signed transfer and pays the traffic fee, and because the merchant holds a standing `TransferPreapproval` it settles directly to the merchant in one transaction. There is no escrow, no lock step, and no facilitator custody.
+On Canton Network, x402 uses the `exact` scheme with the `transfer-factory` settlement method (a CIP-56 Token Standard transfer). The client signs a `TransferFactory_Transfer` naming the merchant as receiver but does **not** submit it; the facilitator relays the signed transfer and pays the traffic fee, and because the merchant holds a standing `TransferPreapproval` it settles directly to the merchant in one transaction. There is no escrow, no lock step, and no facilitator custody. The scheme works the same for Canton Coin and any CIP-56 registry token (e.g. USDCx); they differ only by the instrument (`extra.instrumentId`).
+
+> **Canonical wire format & rules:** the normative payload structure and verification rules live in the merged x402 spec — [`scheme_exact_canton.md`](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_canton.md). This page is the FTP usage guide; the spec is the source of truth.
 
 ## How It Works
 
@@ -38,7 +40,7 @@ The facilitator is the sole submitter: it relays the payer-signed transfer and p
 | Field | Value |
 |---|---|
 | `scheme` | `exact` |
-| `asset` | `CC` |
+| `asset` | `CC` (Canton Coin) or a registry token symbol (e.g. `USDCx`) |
 | `assetTransferMethod` | `transfer-factory` |
 | Networks | `canton:mainnet`, `canton:testnet` |
 
@@ -65,7 +67,7 @@ The facilitator is the sole submitter: it relays the payer-signed transfer and p
 
 - `amount` is an integer string of **atomic units** (1 CC = 10^10 units), so `"10000000000"` = 1 CC. The facilitator compares by value (BigInt atomic units), so a 10×/0.1× error provably never folds, but the form must be a valid integer string.
 - `feePayer` is the facilitator party — the relayer that submits the payer-signed transfer and pays its traffic fee. Clients MUST NOT alter it.
-- `instrumentId` is the Canton Coin instrument `{ admin: "<DSO-party>", id: "Amulet" }`. The transfer-factory path settles Amulet/CC only.
+- `instrumentId` identifies the token. For Canton Coin it is `{ admin: "<DSO-party>", id: "Amulet" }`; for a CIP-56 registry token (e.g. USDCx), `admin` is the token's registrar party and `id` its instrument id. It is authoritative — `asset` is a display symbol.
 - `executeBeforeSeconds` is a relative deadline (seconds from request time) the client uses to compute the transfer's absolute `executeBefore`; after it, the signed transfer is no longer executable.
 - `memo` (optional) is a seller-defined string the client stamps into the transfer's metadata; the facilitator does not validate it.
 
@@ -73,7 +75,7 @@ The facilitator is the sole submitter: it relays the payer-signed transfer and p
 
 ## The Facilitator
 
-A facilitator is a service that bridges x402 and the Canton ledger. It holds a Canton party and relays the payer-signed `TransferFactory_Transfer`: it submits the transaction and pays the sequencer traffic fee, resolving the transfer's execution context (instrument config, amulet rules, active open round) from the SV Scan registry as disclosed contracts. It signs nothing on the payer's behalf; the funds move from the payer's own holdings, and the merchant's `TransferPreapproval` makes the transfer resolve directly. The merchant pays nothing per-request.
+A facilitator is a service that bridges x402 and the Canton ledger. It holds a Canton party and relays the payer-signed `TransferFactory_Transfer`: it submits the transaction and pays the sequencer traffic fee, resolving the transfer's execution context (the instrument's config and choice context) from the registry as disclosed contracts. It signs nothing on the payer's behalf; the funds move from the payer's own holdings, and the merchant's `TransferPreapproval` makes the transfer resolve directly. The merchant pays nothing per-request.
 
 The facilitator exposes two endpoints that the resource server calls:
 
@@ -111,11 +113,12 @@ Canton provides native, on-ledger replay protection. The payer-signed transfer n
 
 | Code | Meaning |
 |---|---|
-| `invalid_exact_canton_missing_proof` | Payload does not reference a payer-signed submission (`submissionRef` / `preparedTxHash`) |
+| `invalid_exact_canton_missing_proof` | Payload does not carry the payer-signed submission (`preparedTransaction` / `preparedTxHash` / `signature`) |
+| `invalid_exact_canton_malformed_payload` | `preparedTransaction` is not valid base64 / a single gzip member, or exceeds the size/decode bounds |
 | `invalid_exact_canton_signature_invalid` | The submission is not validly signed by the payer over `preparedTxHash` |
 | `invalid_exact_canton_amount_mismatch` | Transfer amount ≠ `PaymentRequirements.amount` (by value) |
 | `invalid_exact_canton_merchant_mismatch` | Transfer receiver ≠ `payTo` |
-| `invalid_exact_canton_instrument_id_mismatch` | Transfer instrument is not Canton Coin (≠ `extra.instrumentId`) |
+| `invalid_exact_canton_instrument_id_mismatch` | Transfer instrument does not match `extra.instrumentId` |
 | `invalid_exact_canton_preapproval_missing` | Merchant holds no live `TransferPreapproval`, so the transfer would not settle directly in one transaction |
 | `invalid_exact_canton_fee_payer_mismatch` | `extra.feePayer` ≠ the facilitator's own (relaying) party |
 | `invalid_exact_canton_expired` | `executeBefore` is past or within the safety margin |

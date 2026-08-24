@@ -1,11 +1,11 @@
 ---
 title: "x402 Merchant Integration"
-description: "Gate your Express or Next.js API endpoints behind Canton Coin payments with x402 middleware."
+description: "Gate your Express or Next.js API endpoints behind Canton Coin or CIP-56 token payments with x402 middleware."
 ---
 
-You are a **merchant** if you have an HTTP API and want to charge Canton Coin (CC) per request. Your callers (agents, wallets, or any x402-compatible client) pay before your handler runs.
+You are a **merchant** if you have an HTTP API and want to charge Canton Coin (CC), or any CIP-56 registry token (e.g. USDCx), per request. Your callers (agents, wallets, or any x402-compatible client) pay before your handler runs.
 
-**You do not need a CC balance.** You are receiving, not sending. Settlement uses the `transfer-factory` method: the payer signs a `TransferFactory_Transfer` naming you as receiver, the facilitator relays it, and because you hold a standing `TransferPreapproval` it settles directly to your party in a single transaction.
+**You do not need a token balance.** You are receiving, not sending. Settlement uses the `transfer-factory` method: the payer signs a `TransferFactory_Transfer` naming you as receiver, the facilitator relays it, and because you hold a standing `TransferPreapproval` it settles directly to your party in a single transaction. Canton Coin and registry tokens work identically — you pick the instrument via `extra.instrumentId` in your `PaymentRequirements`.
 
 ## Before You Start
 
@@ -28,13 +28,15 @@ Your party is an Ed25519 self-custody wallet managed through the relay. Provisio
 ```bash
 npm i -g @ftptech/canton-agent-wallet@latest   # provides the `canton-agent-wallet` binary
 
-canton-agent-wallet preapproval \
-  --admin DSO::1220... \
-  --days 30
+# Canton Coin: --admin is the DSO party
+canton-agent-wallet preapproval --admin DSO::1220... --days 30
 # → TransferPreapproval created (updateId ...)
+
+# CIP-56 registry token (e.g. USDCx): --admin is the token's registrar, --id its instrument
+canton-agent-wallet preapproval --admin <registrar>::1220... --id USDCx
 ```
 
-`--admin` is the DSO party id (get it from your Canton Scan API); `--days` is how long the preapproval stays valid before you renew it.
+For Canton Coin, `--admin` is the DSO party id (get it from your Canton Scan API) and `--days` sets the validity before renewal. For a registry token, `--admin` is the registrar and `--id` the instrument id; the registrar must be trusted (`CANTON_AGENT_REGISTRY_TRUSTED_PARTIES`, with USDCx built in). One preapproval per instrument you want to receive.
 
 ### Hosted-node merchant
 
@@ -105,7 +107,7 @@ const paymentReq: PaymentRequirements = {
 **Field notes:**
 
 - `feePayer`: the facilitator party — the relayer that submits the payer-signed transfer and pays its traffic fee. Clients MUST NOT alter it.
-- `instrumentId`: Canton Coin is `{ admin: "<DSO-party>", id: "Amulet" }`. The transfer-factory path settles Amulet/CC only.
+- `instrumentId`: the token to charge. Canton Coin is `{ admin: "<DSO-party>", id: "Amulet" }`; a CIP-56 registry token (e.g. USDCx) is `{ admin: "<registrar-party>", id: "<instrument-id>" }`. To charge a registry token, set this and the matching `asset` symbol, and hold that token's `TransferPreapproval` (Step 1).
 - `executeBeforeSeconds`: relative deadline (seconds from request time) the client uses to compute the transfer's absolute `executeBefore`; after it, the signed transfer is no longer executable.
 - `memo` (optional): a string the client stamps into the transfer's metadata; the facilitator does not validate it.
 

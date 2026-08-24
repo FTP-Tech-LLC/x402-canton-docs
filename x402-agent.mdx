@@ -1,6 +1,6 @@
 ---
 title: "x402 Agent Integration"
-description: "Make automated Canton Coin payments from an agent or backend service using the canton-agent-wallet CLI and SDK."
+description: "Make automated Canton Coin or CIP-56 token payments from an agent or backend service using the canton-agent-wallet CLI and SDK."
 ---
 
 An **agent** (or payer) is any client that calls x402-gated endpoints. When the server returns `402 Payment Required`, the agent signs a `TransferFactory_Transfer` (naming the merchant as receiver) but does **not** submit it — it attaches the payer-signed transfer as the payment proof and retries automatically. The facilitator relays that signed transfer and pays the network traffic fee; because the merchant holds a standing `TransferPreapproval`, it settles directly to the merchant in a single transaction.
@@ -82,6 +82,39 @@ canton-agent-wallet withdraw --relay-url https://facilitator.ftptech.xyz --to "r
 
 `--amount` is in **CC (decimal)**, so `5.0` = 5 CC. This differs from `PaymentRequirements.amount` in the 402 challenge, which is in **atomic units** (10^10 per CC).
 
+### Registry tokens (e.g. USDCx)
+
+The wallet handles CIP-56 registry tokens (like USDCx) alongside Canton Coin. Two
+independent opt-ins keep them safe by default:
+
+- **Trust** a token's registrar to *verify and receive* it — set
+  `CANTON_AGENT_REGISTRY_TRUSTED_PARTIES` (USDCx's registrar is trusted out of the
+  box). An untrusted registrar's incoming transfers are skipped by `claim`.
+- **Consent** to *spend* a token — set
+  `CANTON_AGENT_PAYABLE_INSTRUMENTS="<registrar>|USDCx"`. The default is Canton
+  Coin only, so a merchant cannot make you pay in a token you did not opt into.
+
+```bash
+# See every instrument held (CC + registry tokens)
+canton-agent-wallet balance
+
+# Receive USDCx one-shot (direct): self-provision your own registry preapproval
+canton-agent-wallet preapproval --admin <registrar>::1220... --id USDCx
+
+# Accept a pending incoming USDCx transfer (registrar must be trusted)
+canton-agent-wallet claim
+
+# Pay an x402 endpoint priced in USDCx (opt in to spending it first)
+export CANTON_AGENT_PAYABLE_INSTRUMENTS="<registrar>::1220...|USDCx"
+canton-agent-wallet pay https://api.example.com/resource
+
+# Withdraw a registry token instead of CC
+canton-agent-wallet withdraw --to "recipient::1220..." --amount 1.0 --admin <registrar>::1220... --id USDCx
+```
+
+`--admin`/`--id` always travel together. `pay` needs no `--admin`/`--id` — the
+instrument comes from the merchant's 402 challenge; you only opt in to spending it.
+
 ### Export / Import
 
 Back up and restore the wallet key:
@@ -101,6 +134,8 @@ canton-agent-wallet import --relay-url https://facilitator.ftptech.xyz --key-fil
 | `CANTON_AGENT_RELAY_URL` | Facilitator URL (alternative to `--relay-url` on every command) |
 | `CANTON_AGENT_NETWORK` | Canton network (default: `canton:testnet`; set to `canton:mainnet` for mainnet) |
 | `CANTON_AGENT_API_KEY` | API key if the facilitator requires one |
+| `CANTON_AGENT_REGISTRY_TRUSTED_PARTIES` | Registrars to trust for verifying/claiming CIP-56 tokens (USDCx is built in) |
+| `CANTON_AGENT_PAYABLE_INSTRUMENTS` | Registry tokens you consent to **spend**, e.g. `"<registrar>\|USDCx"` (default: Canton Coin only) |
 | `HTTPS_PROXY` | HTTP proxy for outbound requests |
 
 <Warning>
@@ -139,7 +174,7 @@ Payment settles in a single transaction. When the agent pays an x402-gated URL i
 
 1. `POST /v2/interactive-submission/prepare` → gets `preparedTransactionHash`
 2. Agent signs the hash with its Ed25519 key (does **not** execute/submit)
-3. Retries the original request with `PAYMENT-SIGNATURE: <base64 PaymentPayload>` carrying the signed submission reference
+3. Retries the original request with `PAYMENT-SIGNATURE: <base64 PaymentPayload>` carrying the payer-signed transfer inline (the prepared transaction plus the signature)
 
 The merchant's server then calls the facilitator's `/verify` and `/settle`. The facilitator **relays** the payer-signed transfer — it submits the transaction and pays the sequencer traffic fee. Because the merchant holds a live `TransferPreapproval`, the transfer resolves directly and moves CC from the payer's own holdings to the merchant in one transaction. The agent never pays gas; the facilitator never holds custody and signs nothing on the payer's behalf.
 
