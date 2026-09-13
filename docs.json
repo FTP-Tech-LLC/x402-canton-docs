@@ -17,6 +17,10 @@
       {
         "group": "Guides",
         "pages": ["x402-payments", "x402-agent", "x402-merchant"]
+      },
+      {
+        "group": "Legal",
+        "pages": ["terms"]
       }
     ]
   },
