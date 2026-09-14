@@ -29,14 +29,14 @@ Your party is an Ed25519 self-custody wallet managed through the relay. Provisio
 npm i -g @ftptech/canton-agent-wallet@latest   # provides the `canton-agent-wallet` binary
 
 # Canton Coin: --admin is the DSO party
-canton-agent-wallet preapproval --admin DSO::1220... --days 30
+canton-agent-wallet preapproval --admin DSO::1220... --days 180
 # → TransferPreapproval created (updateId ...)
 
 # CIP-56 registry token (e.g. USDCx): --admin is the token's registrar, --id its instrument
 canton-agent-wallet preapproval --admin <registrar>::1220... --id USDCx
 ```
 
-For Canton Coin, `--admin` is the DSO party id (get it from your Canton Scan API) and `--days` sets the validity before renewal. For a registry token, `--admin` is the registrar and `--id` the instrument id; the registrar must be trusted (`CANTON_AGENT_REGISTRY_TRUSTED_PARTIES`, with USDCx built in). One preapproval per instrument you want to receive.
+For Canton Coin, `--admin` is the DSO party id (get it from your Canton Scan API) and `--days` sets the validity before renewal — there is no fixed maximum, a longer window just prepays a slightly larger one-time fee (roughly ~0.016 CC/day, so 180 days ≈ ~3 CC), so pick a duration your merchant wallet can fund and renew before it expires (`--expires-at <ISO>` overrides `--days`). For a registry token, `--admin` is the registrar and `--id` the instrument id; the registrar must be trusted (`CANTON_AGENT_REGISTRY_TRUSTED_PARTIES`, with USDCx built in). One preapproval per instrument you want to receive.
 
 ### Hosted-node merchant
 
