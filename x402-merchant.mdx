@@ -1,152 +1,118 @@
 ---
 title: "x402 Merchant Integration"
-description: "Gate your Express or Next.js API endpoints behind Canton Coin or CIP-56 token payments with x402 middleware."
+description: "Charge Canton Coin or a CIP-56 token per HTTP request with x402 middleware, on Express or Next.js."
 ---
 
-You are a **merchant** if you have an HTTP API and want to charge Canton Coin (CC), or any CIP-56 registry token (e.g. USDCx), per request. Your callers (agents, wallets, or any x402-compatible client) pay before your handler runs.
+Add x402 to your API to charge Canton Coin (CC) or a CIP-56 registry token (e.g. USDCx) per request. Callers pay before your handler runs. **You do not need a token balance** - you receive, you do not send.
 
-**You do not need a token balance.** You are receiving, not sending. Settlement uses the `transfer-factory` method: the payer signs a `TransferFactory_Transfer` naming you as receiver, the facilitator relays it, and because you hold a standing `TransferPreapproval` it settles directly to your party in a single transaction. Canton Coin and registry tokens work identically — you pick the instrument via `extra.instrumentId` in your `PaymentRequirements`.
+## Quickstart
 
-## Before You Start
+Four steps to a paid endpoint. Details are in [Reference](#reference) below.
 
-You need:
-
-- A Canton party ID (your receiver identity on Canton mainnet)
-- A live `TransferPreapproval` for Canton Coin with you as receiver (see Step 1) — this is what lets an incoming transfer settle in one transaction
-- A facilitator URL, party ID, and synchronizer ID (Step 2)
-
-## Step 1: Provision a TransferPreapproval
-
-Before any agent can pay you, your party MUST hold a live `TransferPreapproval` for the Canton Coin instrument (receiver = you). It is what lets an incoming `TransferFactory_Transfer` resolve **direct** — accepted automatically and settled in one transaction. Without it the transfer resolves to a two-step pending `TransferInstruction`, the facilitator cannot settle in one round-trip, and `/settle` is rejected with `invalid_exact_canton_preapproval_missing` (your callers get a 402 instead of the resource). A `TransferPreapproval` is time-bounded — renew it before expiry to keep the one-transaction path available.
-
-Pick the path that matches how your party is hosted.
-
-### External-party merchant (relay-managed wallet)
-
-Your party is an Ed25519 self-custody wallet managed through the relay. Provision the preapproval with the CLI — it self-provisions, no operator token needed:
+<Steps>
+<Step title="Provision a TransferPreapproval (once)">
+Your party needs a live `TransferPreapproval` so incoming payments settle in one transaction. Provision it with the CLI (self-custody wallet), passing the Canton Coin admin (the DSO party, from your Scan API):
 
 ```bash
-npm i -g @ftptech/canton-agent-wallet@latest   # provides the `canton-agent-wallet` binary
-
-# Canton Coin: --admin is the DSO party
+npm i -g @ftptech/canton-agent-wallet@latest
 canton-agent-wallet preapproval --admin DSO::1220... --days 180
 # → TransferPreapproval created (updateId ...)
-
-# CIP-56 registry token (e.g. USDCx): --admin is the token's registrar, --id its instrument
-canton-agent-wallet preapproval --admin <registrar>::1220... --id USDCx
 ```
+</Step>
 
-For Canton Coin, `--admin` is the DSO party id (get it from your Canton Scan API) and `--days` sets the validity before renewal — there is no fixed maximum, a longer window just prepays a slightly larger one-time fee (roughly ~0.016 CC/day, so 180 days ≈ ~3 CC), so pick a duration your merchant wallet can fund and renew before it expires (`--expires-at <ISO>` overrides `--days`). For a registry token, `--admin` is the registrar and `--id` the instrument id; the registrar must be trusted (`CANTON_AGENT_REGISTRY_TRUSTED_PARTIES`, with USDCx built in). One preapproval per instrument you want to receive.
-
-### Hosted-node merchant
-
-If your party lives on your OWN Canton node/wallet, create the `TransferPreapproval` through that wallet/validator directly (receiver = your party) — no relay or CLI needed. There is no custom DAR to install: `transfer-factory` runs through the standard CIP-56 `:TransferInstruction` interface.
-
-## Step 2: Get Facilitator Parameters
-
-Call `GET /supported` on your facilitator to get the values you need:
-
-```bash
-curl https://facilitator.ftptech.xyz/supported
-```
-
-```json
-{
-  "kinds": [{
-    "x402Version": 2,
-    "scheme": "exact",
-    "network": "canton:mainnet",
-    "extra": {
-      "transferMethods": ["transfer-factory"],
-      "synchronizerId": "global-domain::1220..."
-    }
-  }],
-  "signers": {
-    "canton:*": ["<facilitator-party>::1220..."]
-  }
-}
-```
-
-From this response: `signers["canton:*"][0]` is your `feePayer`, and `extra.synchronizerId` is your synchronizer. Get the DSO party id (for `instrumentId.admin`) from your Canton Scan API.
-
-## Step 3: Install
-
+<Step title="Install the middleware">
 ```bash
 # Express
 npm i @ftptech/x402-canton-core @ftptech/x402-canton-express
-
 # Next.js App Router
 npm i @ftptech/x402-canton-core @ftptech/x402-canton-next
 ```
+</Step>
 
-## Step 4: Define PaymentRequirements
-
-```typescript
-import type { PaymentRequirements } from "@ftptech/x402-canton-core";
-
-const paymentReq: PaymentRequirements = {
-  scheme: "exact",
-  network: "canton:mainnet",
-  amount: "10000000000",            // atomic units (1 CC = 10^10 units)
-  asset: "CC",
-  payTo: "<YOUR_PARTY>::1220...",   // your Canton party id; CC lands here
-  maxTimeoutSeconds: 120,
-  extra: {
-    assetTransferMethod: "transfer-factory",
-    feePayer: "<facilitator-party>::1220...",
-    synchronizerId: "global-domain::1220...",
-    instrumentId: { admin: "<DSO-party>::1220...", id: "Amulet" },
-    executeBeforeSeconds: 120,
-    // memo: "invoice-2024-001"      // optional reconciliation tag (not validated)
-  },
-};
-```
-
-**Amount format:** an integer string of atomic units (1 CC = 10^10 units). The facilitator compares by value (BigInt atomic units), so `"10000000000"` = 1 CC and `"100000000"` = 0.01 CC; a mismatch returns `invalid_exact_canton_amount_mismatch`.
-
-**Field notes:**
-
-- `feePayer`: the facilitator party — the relayer that submits the payer-signed transfer and pays its traffic fee. Clients MUST NOT alter it.
-- `instrumentId`: the token to charge. Canton Coin is `{ admin: "<DSO-party>", id: "Amulet" }`; a CIP-56 registry token (e.g. USDCx) is `{ admin: "<registrar-party>", id: "<instrument-id>" }`. To charge a registry token, set this and the matching `asset` symbol, and hold that token's `TransferPreapproval` (Step 1).
-- `executeBeforeSeconds`: relative deadline (seconds from request time) the client uses to compute the transfer's absolute `executeBefore`; after it, the signed transfer is no longer executable.
-- `memo` (optional): a string the client stamps into the transfer's metadata; the facilitator does not validate it.
-
-> These field names follow the x402-ENVELOPE convention. `synchronizerId` may be omitted; clients fall back to the value advertised by `GET /supported`.
-
-## Step 5: Add Middleware
-
-### Express
-
+<Step title="Gate a route">
 ```typescript
 import express from "express";
 import { cantonPaymentMiddleware } from "@ftptech/x402-canton-express";
 
+const paymentReq = {
+  scheme: "exact",
+  network: "canton:mainnet",
+  amount: "10000000000",              // atomic units: 1 CC = 10^10
+  asset: "CC",
+  payTo: "<YOUR_PARTY>::1220...",     // CC lands here
+  maxTimeoutSeconds: 120,
+  extra: {
+    assetTransferMethod: "transfer-factory",
+    feePayer: "<facilitator-party>::1220...",   // from GET /supported
+    synchronizerId: "global-domain::1220...",   // from GET /supported
+    instrumentId: { admin: "<DSO-party>::1220...", id: "Amulet" },
+    executeBeforeSeconds: 120,
+  },
+} as const;
+
 const app = express();
 app.use(express.json());
-
 app.use(
   cantonPaymentMiddleware({
     facilitatorUrl: "https://facilitator.ftptech.xyz",
-    routes: {
-      "POST /api/data": {
-        accepts:     [paymentReq],
-        description: "Access to premium data",  // shown to clients in 402 body
-        mimeType:    "application/json",
-      },
-      "GET /api/data": { accepts: [paymentReq] },
-    },
-  })
+    routes: { "POST /api/data": { accepts: [paymentReq] } },
+  }),
 );
 
-// Handler runs only after payment is verified and settled
-app.post("/api/data", (req, res) => {
-  res.json({ result: "..." });
-});
-
+app.post("/api/data", (req, res) => res.json({ result: "..." })); // runs only after payment
 app.listen(3000);
 ```
+</Step>
 
-Route keys use `"METHOD /path"` format, matched exactly against `${req.method} ${req.path}`. Unregistered routes pass through ungated.
+<Step title="Verify">
+```bash
+curl -si https://your-api.com/api/data -H "Content-Type: application/json" -d '{}'
+# HTTP/2 402
+# payment-required: <base64>
+```
+Decode to confirm your values: `echo "<base64>" | base64 -d | jq '.accepts[0]'`
+</Step>
+</Steps>
+
+## How it works
+
+The payer signs a `TransferFactory_Transfer` naming you as receiver but does not submit it. The facilitator relays it and pays the traffic fee; your standing `TransferPreapproval` makes it settle directly to you in one transaction. No escrow, no custody. CC and registry tokens use the same flow, differing only by `extra.instrumentId`. See [How Payments Work](/x402-payments) for the full flow, error codes, and replay protection.
+
+## Reference
+
+### Facilitator parameters
+
+`feePayer` and `synchronizerId` come from `GET /supported`; the DSO party (for `instrumentId.admin`) comes from your Canton Scan API.
+
+```bash
+curl https://facilitator.ftptech.xyz/supported
+# signers["canton:*"][0]  -> feePayer
+# extra.synchronizerId    -> synchronizerId
+```
+
+`synchronizerId` may be omitted from `extra`; clients fall back to the advertised value.
+
+### TransferPreapproval
+
+Without a live preapproval the transfer resolves to a two-step pending `TransferInstruction`, `/settle` returns `invalid_exact_canton_preapproval_missing`, and callers get a 402 instead of the resource. A preapproval is time-bounded, so renew it before expiry. There is no fixed maximum; a longer `--days` prepays a slightly larger one-time fee (about 0.016 CC/day, so 180 days is roughly 3 CC). `--expires-at <ISO>` overrides `--days`.
+
+To charge a **registry token**, provision one preapproval per instrument and pass its registrar as `--admin`:
+
+```bash
+canton-agent-wallet preapproval --admin <registrar>::1220... --id USDCx
+```
+
+The registrar must be trusted (`CANTON_AGENT_REGISTRY_TRUSTED_PARTIES`; USDCx is built in).
+
+**Hosted-node merchant:** if your party lives on your own Canton node, create the `TransferPreapproval` through that wallet/validator directly (receiver = your party). No relay or CLI needed, and no custom DAR to install - `transfer-factory` runs through the standard CIP-56 `:TransferInstruction` interface.
+
+### PaymentRequirements fields
+
+- `amount`: integer string of atomic units (1 CC = 10^10). Compared by value, so `"100000000"` = 0.01 CC; a mismatch returns `invalid_exact_canton_amount_mismatch`.
+- `feePayer`: the facilitator party. Clients MUST NOT alter it.
+- `instrumentId`: the token charged, and authoritative over `asset` (a display symbol). CC is `{ admin: "<DSO-party>", id: "Amulet" }`; a registry token is `{ admin: "<registrar>", id: "<instrument-id>" }`.
+- `executeBeforeSeconds`: relative deadline (seconds) the client uses to compute the transfer's absolute `executeBefore`.
+- `memo` (optional): a reconciliation tag stamped into the transfer metadata; not validated.
 
 ### Next.js App Router
 
@@ -156,41 +122,15 @@ import { withCantonPayment } from "@ftptech/x402-canton-next";
 
 export const POST = withCantonPayment(
   async (req) => Response.json({ result: "..." }),
-  {
-    accepts: [paymentReq],
-    facilitatorUrl: "https://facilitator.ftptech.xyz",
-  }
+  { accepts: [paymentReq], facilitatorUrl: "https://facilitator.ftptech.xyz" },
 );
 ```
 
-## Step 6: Verify It Works
+Express route keys use `"METHOD /path"`, matched exactly against `${req.method} ${req.path}`. Unregistered routes pass through ungated.
 
-Call your gated endpoint without payment:
+### Security notes
 
-```bash
-curl -si https://your-api.com/api/data \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-
-Expected:
-```
-HTTP/2 402
-payment-required: <base64>
-```
-
-Decode to confirm your requirements are correct:
-
-```bash
-echo "<base64-value>" | base64 -d | jq '.accepts[0]'
-```
-
-You should see your `amount`, `payTo`, and `feePayer` values.
-
-## Security Notes
-
-- **Your `accepts[]` is authoritative.** The middleware ignores any amount the client claims. A client cannot request a 1 CC resource for 0.01 CC by tampering with the payment payload.
-- **The proven payer is on-ledger.** The facilitator binds the proven payer to the sender of the signed `TransferFactory_Transfer`, not to anything the client puts in the payload, so a spoofed `payer` field cannot impersonate.
-- **Settlement happens before your handler.** If your handler throws after a successful `/settle`, the payer already paid. Handle errors gracefully; do not retry settlement.
-- **Keep `payTo` correct.** CC goes to whatever `payTo` says. If your party ID changes, update `paymentReq` AND provision a `TransferPreapproval` (Step 1) for the new party.
-
+- **Your `accepts[]` is authoritative.** The middleware ignores any amount the client claims; a client cannot pay 0.01 CC for a 1 CC resource by tampering.
+- **The proven payer is on-ledger.** The facilitator binds the payer to the signed transfer's sender, not to any payload field, so a spoofed `payer` cannot impersonate.
+- **Settlement happens before your handler.** If your handler throws after `/settle`, the payer already paid. Handle errors gracefully; do not retry settlement.
+- **Keep `payTo` correct.** Funds go where `payTo` says. If your party changes, update `paymentReq` and provision a new `TransferPreapproval`.

@@ -1,27 +1,15 @@
 ---
 title: "x402 on Canton"
-description: "Pay per HTTP request in Canton Coin. No API keys, no accounts — the payment is the credential."
+description: "Pay per HTTP request in Canton Coin or a CIP-56 token. No API keys, no accounts; the payment is the credential."
 ---
 
-x402 brings the `402 Payment Required` HTTP standard to Canton Network. A client
-calls an endpoint, receives a `402` with payment requirements, pays on-ledger in
-Canton Coin or a CIP-56 registry token (e.g. USDCx), and retries — the payment
-itself is the credential. No API keys, no billing accounts.
-
-On Canton, the `exact` scheme settles via the CIP-56 `transfer-factory` method:
-the payer signs a `TransferFactory_Transfer` naming the merchant as receiver but
-does **not** submit it. The facilitator relays the signed transfer and pays the
-network traffic fee, and because the merchant holds a standing
-`TransferPreapproval`, it settles directly to the merchant in a single
-transaction — no escrow, no lock step, no facilitator custody. Canton Coin and
-any CIP-56 registry token share the same flow and differ only by the instrument
-(`extra.instrumentId`).
+x402 brings the `402 Payment Required` HTTP standard to Canton Network. A client calls an endpoint, gets a `402` with payment requirements, pays on-ledger in Canton Coin or a CIP-56 registry token (e.g. USDCx), and retries. The payment is the credential: no API keys, no billing accounts.
 
 ## Start here
 
 <CardGroup cols={3}>
   <Card title="How payments work" icon="book-open" href="/x402-payments">
-    The x402 protocol and the exact / transfer-factory settlement flow on Canton.
+    The exact scheme and the transfer-factory settlement flow on Canton.
   </Card>
   <Card title="Agent integration" icon="robot" href="/x402-agent">
     Pay x402-gated endpoints from an agent or backend service.

@@ -1,17 +1,15 @@
 ---
-title: "x402 HTTP Payments"
-description: "Gate any HTTP endpoint behind Canton Coin or CIP-56 token payments using the x402 protocol and the exact scheme."
+title: "How Payments Work"
+description: "The x402 exact scheme on Canton: the transfer-factory settlement flow, fields, error codes, and replay protection."
 ---
 
-The [x402 protocol](https://x402.org) is an HTTP payment standard built around the `402 Payment Required` status code. A server responds with payment requirements; the client pays on-chain and retries. There are no API keys and no billing accounts; the payment itself is the credential.
+The [x402 protocol](https://x402.org) turns the `402 Payment Required` status code into a payment flow: a server returns payment requirements, the client pays on-chain and retries, and the payment itself is the credential. No API keys, no billing accounts.
 
-On Canton Network, x402 uses the `exact` scheme with the `transfer-factory` settlement method (a CIP-56 Token Standard transfer). The client signs a `TransferFactory_Transfer` naming the merchant as receiver but does **not** submit it; the facilitator relays the signed transfer and pays the traffic fee, and because the merchant holds a standing `TransferPreapproval` it settles directly to the merchant in one transaction. There is no escrow, no lock step, and no facilitator custody. The scheme works the same for Canton Coin and any CIP-56 registry token (e.g. USDCx); they differ only by the instrument (`extra.instrumentId`).
+On Canton, x402 uses the `exact` scheme with the `transfer-factory` settlement method (a CIP-56 Token Standard transfer). The client signs a `TransferFactory_Transfer` naming the merchant as receiver but does **not** submit it; the facilitator relays the signed transfer and pays the traffic fee, and because the merchant holds a standing `TransferPreapproval` it settles directly to the merchant in one transaction. No escrow, no lock step, no facilitator custody. Canton Coin and any CIP-56 registry token (e.g. USDCx) share this flow, differing only by the instrument (`extra.instrumentId`).
 
-> **Canonical wire format & rules:** the normative payload structure and verification rules live in the merged x402 spec — [`scheme_exact_canton.md`](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_canton.md). This page is the FTP usage guide; the spec is the source of truth.
+> **Source of truth:** the normative payload structure and verification rules live in the merged x402 spec, [`scheme_exact_canton.md`](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_canton.md). This page is the FTP usage guide.
 
-## How It Works
-
-The client signs the transfer off-ledger; the facilitator submits it in a single transaction.
+## The flow
 
 ```mermaid
 sequenceDiagram
@@ -22,7 +20,7 @@ sequenceDiagram
 
     C->>R: GET /resource
     R->>C: 402 Payment Required<br/>(PAYMENT-REQUIRED header)
-    note over C,F: Client prepares + signs TransferFactory_Transfer<br/>(interactive submission) — does NOT submit
+    note over C,F: Client prepares + signs TransferFactory_Transfer<br/>(interactive submission) - does NOT submit
     C->>R: GET /resource + PAYMENT-SIGNATURE
     R->>F: POST /verify
     F-->>R: VerifyResponse (valid)
@@ -33,9 +31,9 @@ sequenceDiagram
     R->>C: 200 + PAYMENT-RESPONSE
 ```
 
-The facilitator is the sole submitter: it relays the payer-signed transfer and pays only the sequencer traffic (gas). It signs nothing on the payer's behalf and never holds custody — the funds move from the payer's own holdings, and the merchant's `TransferPreapproval` is what makes the transfer resolve directly in one transaction.
+The facilitator is the sole submitter: it relays the payer-signed transfer and pays only the sequencer traffic. It signs nothing on the payer's behalf and never holds custody. The funds move from the payer's own holdings, and the merchant's `TransferPreapproval` is what makes the transfer resolve directly.
 
-## Scheme: `exact`
+## The `exact` scheme
 
 | Field | Value |
 |---|---|
@@ -44,7 +42,7 @@ The facilitator is the sole submitter: it relays the payer-signed transfer and p
 | `assetTransferMethod` | `transfer-factory` |
 | Networks | `canton:mainnet`, `canton:testnet` |
 
-### PaymentRequirements structure
+### PaymentRequirements
 
 ```json
 {
@@ -65,24 +63,22 @@ The facilitator is the sole submitter: it relays the payer-signed transfer and p
 }
 ```
 
-- `amount` is an integer string of **atomic units** (1 CC = 10^10 units), so `"10000000000"` = 1 CC. The facilitator compares by value (BigInt atomic units), so a 10×/0.1× error provably never folds, but the form must be a valid integer string.
-- `feePayer` is the facilitator party — the relayer that submits the payer-signed transfer and pays its traffic fee. Clients MUST NOT alter it.
-- `instrumentId` identifies the token. For Canton Coin it is `{ admin: "<DSO-party>", id: "Amulet" }`; for a CIP-56 registry token (e.g. USDCx), `admin` is the token's registrar party and `id` its instrument id. It is authoritative — `asset` is a display symbol.
-- `executeBeforeSeconds` is a relative deadline (seconds from request time) the client uses to compute the transfer's absolute `executeBefore`; after it, the signed transfer is no longer executable.
-- `memo` (optional) is a seller-defined string the client stamps into the transfer's metadata; the facilitator does not validate it.
+- `amount`: integer string of atomic units (1 CC = 10^10 units), so `"10000000000"` = 1 CC. Compared by value.
+- `feePayer`: the facilitator party (the relayer). Clients MUST NOT alter it.
+- `instrumentId`: the token, authoritative over `asset` (a display symbol). CC is `{ admin: "<DSO-party>", id: "Amulet" }`; a registry token is `{ admin: "<registrar>", id: "<instrument-id>" }`.
+- `executeBeforeSeconds`: relative deadline (seconds from request time) for the transfer's absolute `executeBefore`.
+- `memo` (optional): a client-stamped tag; not validated by the facilitator.
 
-> `feePayer`, `synchronizerId`, and `instrumentId.admin` (the DSO party) are deployment values. Get `feePayer` and `synchronizerId` from `GET /supported` on your facilitator; get the DSO party id from your Canton Scan API.
+> `feePayer`, `synchronizerId`, and `instrumentId.admin` are deployment values. Get `feePayer` and `synchronizerId` from `GET /supported`; get the DSO party from your Canton Scan API.
 
-## The Facilitator
+## The facilitator
 
-A facilitator is a service that bridges x402 and the Canton ledger. It holds a Canton party and relays the payer-signed `TransferFactory_Transfer`: it submits the transaction and pays the sequencer traffic fee, resolving the transfer's execution context (the instrument's config and choice context) from the registry as disclosed contracts. It signs nothing on the payer's behalf; the funds move from the payer's own holdings, and the merchant's `TransferPreapproval` makes the transfer resolve directly. The merchant pays nothing per-request.
+A facilitator bridges x402 and the Canton ledger. It relays the payer-signed `TransferFactory_Transfer` - submitting the transaction, paying the traffic fee, and resolving the transfer's execution context from the registry as disclosed contracts. It exposes two endpoints the resource server calls:
 
-The facilitator exposes two endpoints that the resource server calls:
+- `POST /verify` - validates the signed transfer against `PaymentRequirements` (no ledger write)
+- `POST /settle` - relays the signed transfer and returns the ledger `updateId`
 
-- `POST /verify` validates the payer-signed transfer against `PaymentRequirements` (no ledger write)
-- `POST /settle` relays the signed transfer and returns the ledger `updateId`
-
-Use `GET /supported` on any facilitator to discover its party ID, advertised method, and the networks it serves:
+`GET /supported` returns its party id, method, and networks:
 
 ```json
 {
@@ -95,34 +91,40 @@ Use `GET /supported` on any facilitator to discover its party ID, advertised met
       "synchronizerId": "global-domain::1220..."
     }
   }],
-  "signers": {
-    "canton:*": ["<facilitator-party>::1220..."]
-  }
+  "signers": { "canton:*": ["<facilitator-party>::1220..."] }
 }
 ```
 
-Because `/supported` advertises `synchronizerId`, a 402 `extra` MAY omit it and clients will fall back to this value.
+Because `/supported` advertises `synchronizerId`, a 402 `extra` MAY omit it. `transfer-factory` runs through the standard CIP-56 `:TransferInstruction` interface, so there is no custom DAR for merchants to install.
 
-> `transfer-factory` runs through the standard CIP-56 `:TransferInstruction` interface — there is no custom DAR for merchants to install.
+## Replay protection
 
-## Replay Protection
+Replay protection is native and on-ledger. The payer-signed transfer names specific input holdings; once it executes those holdings are consumed, so resubmitting the same payload references already-spent holdings and the ledger rejects it. A facilitator MUST **relay** the signed transfer to settle; it MUST NOT treat a previously observed `updateId` as settlement, since reading a completed update is replayable and moves no funds.
 
-Canton provides native, on-ledger replay protection. The payer-signed transfer names specific input holdings; once it executes, those holdings are consumed, so resubmitting the same payload references already-spent holdings and the ledger rejects it. A facilitator MUST **relay** the signed transfer to settle — it MUST NOT treat a previously observed `updateId` as settlement, since a read of a completed update is replayable and moves no funds, whereas relaying the signed transfer is single-use by construction.
-
-## Error Codes
+## Error codes
 
 | Code | Meaning |
 |---|---|
 | `invalid_exact_canton_missing_proof` | Payload does not carry the payer-signed submission (`preparedTransaction` / `preparedTxHash` / `signature`) |
-| `invalid_exact_canton_malformed_payload` | `preparedTransaction` is not valid base64 / a single gzip member, or exceeds the size/decode bounds |
+| `invalid_exact_canton_malformed_payload` | `preparedTransaction` is not valid base64 / a single gzip member, or exceeds the size bounds |
 | `invalid_exact_canton_signature_invalid` | The submission is not validly signed by the payer over `preparedTxHash` |
 | `invalid_exact_canton_amount_mismatch` | Transfer amount ≠ `PaymentRequirements.amount` (by value) |
 | `invalid_exact_canton_merchant_mismatch` | Transfer receiver ≠ `payTo` |
 | `invalid_exact_canton_instrument_id_mismatch` | Transfer instrument does not match `extra.instrumentId` |
-| `invalid_exact_canton_preapproval_missing` | Merchant holds no live `TransferPreapproval`, so the transfer would not settle directly in one transaction |
-| `invalid_exact_canton_fee_payer_mismatch` | `extra.feePayer` ≠ the facilitator's own (relaying) party |
+| `invalid_exact_canton_preapproval_missing` | Merchant holds no live `TransferPreapproval`, so the transfer would not settle in one transaction |
+| `invalid_exact_canton_fee_payer_mismatch` | `extra.feePayer` ≠ the facilitator's own party |
 | `invalid_exact_canton_expired` | `executeBefore` is past or within the safety margin |
-| `invalid_exact_canton_self_payment` | The proven sender is the facilitator / fee payer; the facilitator must never move its own funds |
-| `invalid_exact_canton_execute_failed` | The relayed transfer was rejected on execution — an input holding was already spent (concurrent settlement) or funds were insufficient. Transient input contention SHOULD be retried |
+| `invalid_exact_canton_self_payment` | The proven sender is the facilitator / fee payer |
+| `invalid_exact_canton_execute_failed` | The relayed transfer was rejected on execution (an input holding was already spent, or funds were insufficient). Transient contention SHOULD be retried |
 | `unexpected_canton_ledger_error` | Network mismatch, missing preapproval, or a Scan/ledger error not covered above |
 
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Merchant integration" icon="store" href="/x402-merchant">
+    Charge CC or a CIP-56 token on your Express or Next.js API.
+  </Card>
+  <Card title="Agent integration" icon="robot" href="/x402-agent">
+    Pay x402-gated endpoints from an agent or backend.
+  </Card>
+</CardGroup>
