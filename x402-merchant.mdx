@@ -128,6 +128,13 @@ export const POST = withCantonPayment(
 
 Express route keys use `"METHOD /path"`, matched exactly against `${req.method} ${req.path}`. Unregistered routes pass through ungated.
 
+### Request header size
+
+The paid request carries the signed transfer in the `X-PAYMENT` header - ~8-10 KB on Canton (larger than other chains, and more if the payment draws on several holdings). Raise your ingress header limit or the paid retry fails with `400`/`431` before reaching your app:
+
+- **nginx:** `large_client_header_buffers 4 16k;` (default `4 8k`)
+- **Node.js:** `--max-http-header-size=32768` (default is a 16 KB total cap)
+
 ### Security notes
 
 - **Your `accepts[]` is authoritative.** The middleware ignores any amount the client claims; a client cannot pay 0.01 CC for a 1 CC resource by tampering.
