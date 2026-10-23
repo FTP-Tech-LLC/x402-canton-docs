@@ -16,7 +16,7 @@
       },
       {
         "group": "Guides",
-        "pages": ["x402-payments", "x402-agent", "x402-merchant"]
+        "pages": ["x402-merchant", "x402-agent", "x402-payments"]
       },
       {
         "group": "Legal",
@@ -28,13 +28,13 @@
     "links": [
       {
         "label": "GitHub",
-        "href": "https://github.com/Denend/x402-canton-docs"
+        "href": "https://github.com/FTP-Tech-LLC/x402-canton-docs"
       }
     ]
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/Denend"
+      "github": "https://github.com/FTP-Tech-LLC"
     }
   }
 }
