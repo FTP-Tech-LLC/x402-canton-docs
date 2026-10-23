@@ -1,48 +1,32 @@
 ---
-title: "How Payments Work"
-description: "The x402 exact scheme on Canton: the transfer-factory settlement flow, fields, error codes, and replay protection."
+title: "How payments work"
+description: "The x402 exact scheme on Canton: the flow, payment requirements, MainNet values and error codes."
 ---
 
-The [x402 protocol](https://x402.org) turns the `402 Payment Required` status code into a payment flow: a server returns payment requirements, the client pays on-chain and retries, and the payment itself is the credential. No API keys, no billing accounts.
-
-On Canton, x402 uses the `exact` scheme with the `transfer-factory` settlement method (a CIP-56 Token Standard transfer). The client signs a `TransferFactory_Transfer` naming the merchant as receiver but does **not** submit it; the facilitator relays the signed transfer and pays the traffic fee, and because the merchant holds a standing `TransferPreapproval` it settles directly to the merchant in one transaction. No escrow, no lock step, no facilitator custody. Canton Coin and any CIP-56 registry token (e.g. USDCx) share this flow, differing only by the instrument (`extra.instrumentId`).
-
-> **Source of truth:** the normative payload structure and verification rules live in the merged x402 spec, [`scheme_exact_canton.md`](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_canton.md). This page is the FTP usage guide.
-
-## The flow
+A server answers `402` with payment requirements. The client signs a Canton transfer to the merchant and retries the request with it. The merchant's server passes it to the facilitator, which checks it, submits it and pays the network fee. The merchant's `TransferPreapproval` makes the transfer settle in one transaction. Nobody holds custody.
 
 ```mermaid
 sequenceDiagram
-    participant C as Client / Agent
-    participant R as Resource Server
+    participant C as Client
+    participant R as Merchant server
     participant F as Facilitator
-    participant L as Canton Ledger
+    participant L as Canton
 
     C->>R: GET /resource
-    R->>C: 402 Payment Required<br/>(PAYMENT-REQUIRED header)
-    note over C,F: Client prepares + signs TransferFactory_Transfer<br/>(interactive submission) - does NOT submit
+    R->>C: 402 + PAYMENT-REQUIRED
+    note over C: signs the transfer, does not submit it
     C->>R: GET /resource + PAYMENT-SIGNATURE
-    R->>F: POST /verify
-    F-->>R: VerifyResponse (valid)
-    R->>F: POST /settle
-    F->>L: relay payer-signed TransferFactory_Transfer<br/>(facilitator submits + pays traffic)
-    L-->>F: updateId
-    F-->>R: SettlementResponse (updateId)
+    R->>F: /verify, then /settle
+    F->>L: submits the signed transfer, pays traffic
+    F-->>R: updateId
     R->>C: 200 + PAYMENT-RESPONSE
 ```
 
-The facilitator is the sole submitter: it relays the payer-signed transfer and pays only the sequencer traffic. It signs nothing on the payer's behalf and never holds custody. The funds move from the payer's own holdings, and the merchant's `TransferPreapproval` is what makes the transfer resolve directly.
+FTP wallets need no Canton node: the facilitator also acts as their relay and prepares each transaction. The wallet checks the prepared transaction and its hash before signing; the relay never signs.
 
-## The `exact` scheme
+The normative rules are in the x402 spec, [`scheme_exact_canton.md`](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_canton.md). It covers Canton Coin; FTP's facilitator also settles the tokens listed below.
 
-| Field | Value |
-|---|---|
-| `scheme` | `exact` |
-| `asset` | `CC` (Canton Coin) or a registry token symbol (e.g. `USDCx`) |
-| `assetTransferMethod` | `transfer-factory` |
-| Networks | `canton:mainnet`, `canton:testnet` |
-
-### PaymentRequirements
+## Payment requirements
 
 ```json
 {
@@ -50,81 +34,60 @@ The facilitator is the sole submitter: it relays the payer-signed transfer and p
   "network": "canton:mainnet",
   "amount": "10000000000",
   "asset": "CC",
-  "payTo": "<receiver-party>::1220...",
-  "maxTimeoutSeconds": 60,
+  "payTo": "<merchant party>",
+  "maxTimeoutSeconds": 120,
   "extra": {
     "assetTransferMethod": "transfer-factory",
-    "feePayer": "<facilitator-party>::1220...",
-    "synchronizerId": "global-domain::1220...",
-    "instrumentId": { "admin": "<DSO-party>::1220...", "id": "Amulet" },
-    "executeBeforeSeconds": 120,
-    "memo": "invoice-2024-001"
+    "feePayer": "ftp-x402-infrastructure::1220da867ceb28e1531ebfbea9ca9b25f75be06755999f48f0ec4b96f4174e3cd133",
+    "synchronizerId": "global-domain::1220b1431ef217342db44d516bb9befde802be7d8899637d290895fa58880f19accc",
+    "instrumentId": { "admin": "DSO::1220b1431ef217342db44d516bb9befde802be7d8899637d290895fa58880f19accc", "id": "Amulet" },
+    "executeBeforeSeconds": 120
   }
 }
 ```
 
-- `amount`: integer string of atomic units (1 CC = 10^10 units), so `"10000000000"` = 1 CC. Compared by value.
-- `feePayer`: the facilitator party (the relayer). Clients MUST NOT alter it.
-- `instrumentId`: the token, authoritative over `asset` (a display symbol). CC is `{ admin: "<DSO-party>", id: "Amulet" }`; a registry token is `{ admin: "<registrar>", id: "<instrument-id>" }`.
-- `executeBeforeSeconds`: relative deadline (seconds from request time) for the transfer's absolute `executeBefore`.
-- `memo` (optional): a client-stamped tag; not validated by the facilitator.
+- `amount`: atomic units, 10 decimals for every token. `"10000000000"` is 1 CC.
+- `payTo`: the merchant's party id.
+- `extra.instrumentId`: the token. A token's `asset` is `"<admin>::<id>"`.
+- `extra.memo` (optional): a reconciliation tag. The payment must carry the same value.
 
-> `feePayer`, `synchronizerId`, and `instrumentId.admin` are deployment values. Get `feePayer` and `synchronizerId` from `GET /supported`; get the DSO party from your Canton Scan API.
+Headers are x402 v2: `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, `PAYMENT-RESPONSE`.
 
-## The facilitator
+## MainNet values
 
-A facilitator bridges x402 and the Canton ledger. It relays the payer-signed `TransferFactory_Transfer` - submitting the transaction, paying the traffic fee, and resolving the transfer's execution context from the registry as disclosed contracts. It exposes two endpoints the resource server calls:
+From `GET https://facilitator.ftptech.xyz/supported` on 2026-10-24.
 
-- `POST /verify` - validates the signed transfer against `PaymentRequirements` (no ledger write)
-- `POST /settle` - relays the signed transfer and returns the ledger `updateId`
-
-`GET /supported` returns its party id, method, and networks:
-
-```json
-{
-  "kinds": [{
-    "x402Version": 2,
-    "scheme": "exact",
-    "network": "canton:mainnet",
-    "extra": {
-      "transferMethods": ["transfer-factory"],
-      "synchronizerId": "global-domain::1220..."
-    }
-  }],
-  "signers": { "canton:*": ["<facilitator-party>::1220..."] }
-}
-```
-
-Because `/supported` advertises `synchronizerId`, a 402 `extra` MAY omit it. `transfer-factory` runs through the standard CIP-56 `:TransferInstruction` interface, so there is no custom DAR for merchants to install.
-
-## Replay protection
-
-Replay protection is native and on-ledger. The payer-signed transfer names specific input holdings; once it executes those holdings are consumed, so resubmitting the same payload references already-spent holdings and the ledger rejects it. A facilitator MUST **relay** the signed transfer to settle; it MUST NOT treat a previously observed `updateId` as settlement, since reading a completed update is replayable and moves no funds.
-
-## Error codes
-
-| Code | Meaning |
+| Value | MainNet |
 |---|---|
-| `invalid_exact_canton_missing_proof` | Payload does not carry the payer-signed submission (`preparedTransaction` / `preparedTxHash` / `signature`) |
-| `invalid_exact_canton_malformed_payload` | `preparedTransaction` is not valid base64 / a single gzip member, or exceeds the size bounds |
-| `invalid_exact_canton_signature_invalid` | The submission is not validly signed by the payer over `preparedTxHash` |
-| `invalid_exact_canton_amount_mismatch` | Transfer amount ≠ `PaymentRequirements.amount` (by value) |
-| `invalid_exact_canton_merchant_mismatch` | Transfer receiver ≠ `payTo` |
-| `invalid_exact_canton_instrument_id_mismatch` | Transfer instrument does not match `extra.instrumentId` |
-| `invalid_exact_canton_preapproval_missing` | Merchant holds no live `TransferPreapproval`, so the transfer would not settle in one transaction |
-| `invalid_exact_canton_fee_payer_mismatch` | `extra.feePayer` ≠ the facilitator's own party |
-| `invalid_exact_canton_expired` | `executeBefore` is past or within the safety margin |
-| `invalid_exact_canton_self_payment` | The proven sender is the facilitator / fee payer |
-| `invalid_exact_canton_execute_failed` | The relayed transfer was rejected on execution (an input holding was already spent, or funds were insufficient). Transient contention SHOULD be retried |
-| `unexpected_canton_ledger_error` | Network mismatch, missing preapproval, or a Scan/ledger error not covered above |
+| `feePayer` | `ftp-x402-infrastructure::1220da867ceb28e1531ebfbea9ca9b25f75be06755999f48f0ec4b96f4174e3cd133` |
+| `synchronizerId` | `global-domain::1220b1431ef217342db44d516bb9befde802be7d8899637d290895fa58880f19accc` |
 
-## Next steps
+| Token | `instrumentId.admin` | `instrumentId.id` |
+|---|---|---|
+| CC | `DSO::1220b1431ef217342db44d516bb9befde802be7d8899637d290895fa58880f19accc` | `Amulet` |
+| USDCx | `decentralized-usdc-interchain-rep::12208115f1e168dd7e792320be9c4ca720c751a02a3053c7606e1c1cd3dad9bf60ef` | `USDCx` |
+| CBTC | `cbtc-network::12205af3b949a04776fc48cdcc05a060f6bda2e470632935f375d1049a8546a3b262` | `CBTC` |
+| USDXLR | `excellar-issuer::12203d1e36930ee0e3fbb898add7e222a47ae9d2a5f0f6187e3a446ea32f871ce2ca` | `USDXLR` |
+| cETH | `rails-cethMain-1::12200350ba6e96e3b701c3048b5aa013a8c1c08833e8ebf54339cff581055c29003a` | `cETH` |
+| eXAG | `ember-silver::1220ad9c097ae75192b4716854fa413aa8582c86a62b16714663cdab55e025cc79c4` | `eXAG` |
+| eXAU | `ember-gold::1220ad9c097ae75192b4716854fa413aa8582c86a62b16714663cdab55e025cc79c4` | `eXAU` |
 
-<CardGroup cols={2}>
-  <Card title="Merchant integration" icon="store" href="/x402-merchant">
-    Charge CC or a CIP-56 token on your Express or Next.js API.
-  </Card>
-  <Card title="Agent integration" icon="robot" href="/x402-agent">
-    Pay x402-gated endpoints from an agent or backend.
-  </Card>
-</CardGroup>
+The previous facilitator party, `FTP-validator-1::1220c065ad977ae4e480b6ea5bcd96d6d73025a91ad27fa60d1385010ca01cdd39f9`, is still accepted as `feePayer` for a while. Switch to the current one.
+
+## Errors
+
+| Code | What to do |
+|---|---|
+| `invalid_exact_canton_preapproval_missing` | The merchant has no live preapproval. The merchant runs `canton-agent-wallet preapproval`. |
+| `invalid_exact_canton_fee_payer_mismatch` | The merchant updates `feePayer` to the value above. |
+| `invalid_exact_canton_amount_mismatch`, `_merchant_mismatch`, `_instrument_id_mismatch`, `_memo_mismatch` | The payment does not match the 402. Pay what the 402 asks. |
+| `invalid_exact_canton_expired`, `_execute_before_too_far` | Pay again with a fresh deadline. |
+| `invalid_exact_canton_insufficient_balance`, `_insufficient_inputs` | Nothing moved. Fund the wallet. |
+| `invalid_exact_canton_input_contention` | Nothing moved. Safe to pay again. |
+| `invalid_exact_canton_execute_failed` | The outcome may be unknown. Do not pay again before checking the balance. |
+| `invalid_exact_canton_missing_proof`, `_malformed_payload`, `_signature_invalid` | Client bug or outdated client. Upgrade it. |
+| `unexpected_canton_ledger_error` | Check `network` and `assetTransferMethod`. |
+
+An HTTP `503` from `/settle`, or a `502` from the merchant, also means the outcome is unknown: check before paying again.
+
+Replays are refused on-ledger: a signed transfer spends specific holdings, so it can settle only once.
