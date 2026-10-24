@@ -3,7 +3,7 @@ title: "How payments work"
 description: "The x402 exact scheme on Canton: the flow, payment requirements, MainNet values and error codes."
 ---
 
-A server answers `402` with payment requirements. The client signs a Canton transfer to the merchant and retries the request with it. The merchant's server passes it to the facilitator, which checks it, submits it and pays the network fee. The merchant's `TransferPreapproval` makes the transfer settle in one transaction. Nobody holds custody.
+A server answers `402` with payment requirements. The client signs a Canton transfer to the merchant and retries the request with it. The merchant's server passes it to the facilitator, which checks it, submits it and pays the network fee. The merchant's `TransferPreapproval` makes the transfer settle in one transaction. The facilitator never holds the funds.
 
 ```mermaid
 sequenceDiagram
