@@ -1,20 +1,18 @@
 ---
 title: "x402 on Canton"
-description: "Pay per HTTP request in Canton Coin or a CIP-56 token. No API keys, no accounts; the payment is the credential."
+description: "Pay per HTTP request in Canton Coin or a CIP-56 token. No API keys, no accounts: the payment is the credential."
 ---
 
-x402 brings the `402 Payment Required` HTTP standard to Canton Network. A client calls an endpoint, gets a `402` with payment requirements, pays on-ledger in Canton Coin or a CIP-56 registry token (e.g. USDCx), and retries. The payment is the credential: no API keys, no billing accounts.
+An endpoint answers `402 Payment Required`, the client pays on Canton in Canton Coin or a CIP-56 token such as USDCx, and the retried request goes through. No API keys, no billing accounts.
 
-## Start here
-
-<CardGroup cols={3}>
+<CardGroup cols={2}>
+  <Card title="Accept payments" icon="store" href="/x402-merchant">
+    Add a paid route to your Express or Next.js API.
+  </Card>
+  <Card title="Pay" icon="robot" href="/x402-agent">
+    Pay from the CLI, from code, or from an AI agent over MCP.
+  </Card>
   <Card title="How payments work" icon="book-open" href="/x402-payments">
-    The exact scheme and the transfer-factory settlement flow on Canton.
-  </Card>
-  <Card title="Agent integration" icon="robot" href="/x402-agent">
-    Pay x402-gated endpoints from an agent or backend service.
-  </Card>
-  <Card title="Merchant integration" icon="store" href="/x402-merchant">
-    Charge Canton Coin or a CIP-56 token per request on your Express or Next.js API.
+    The flow, MainNet values and error codes.
   </Card>
 </CardGroup>

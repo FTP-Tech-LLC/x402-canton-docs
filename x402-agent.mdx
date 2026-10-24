@@ -1,93 +1,81 @@
 ---
-title: "x402 Agent Integration"
-description: "Pay x402-gated endpoints in Canton Coin or a CIP-56 token from an agent or backend, via the canton-agent-wallet CLI and SDK."
+title: "Agent integration"
+description: "Pay x402 endpoints in Canton Coin or a CIP-56 token from a script, a backend or an AI agent."
 ---
 
-An **agent** is any client that pays x402-gated endpoints. On a `402`, it signs a `TransferFactory_Transfer`, attaches it as proof, and retries automatically. The facilitator relays it and pays the traffic fee, so you never pay gas. See [How Payments Work](/x402-payments) for the full flow.
+Pay from the CLI, from code, or give an AI agent a wallet over MCP. The wallet is self-custody; FTP's facilitator relays each payment and pays the network fee.
 
-## Quickstart
+## CLI
 
 ```bash
-npm i -g @ftptech/canton-agent-wallet@latest
-export CANTON_AGENT_NETWORK=canton:mainnet          # CLI defaults to testnet
-export CANTON_AGENT_RELAY_URL=https://facilitator.ftptech.xyz
-
-canton-agent-wallet create                          # make a wallet + Canton party
-# fund the printed party id with CC, then:
-canton-agent-wallet claim                           # accept the incoming CC
-canton-agent-wallet pay https://api.example.com/resource   # auto-pays the 402
+npm i -g @ftptech/canton-agent-wallet
+canton-agent-wallet create --relay-url https://facilitator.ftptech.xyz
+canton-agent-wallet pay --max 0.5 https://api.example.com/resource
 ```
 
-<Warning>
-`CANTON_AGENT_NETWORK` defaults to `canton:testnet`. Set it to `canton:mainnet` for mainnet, or a testnet wallet hitting the mainnet facilitator fails with a network mismatch.
-</Warning>
+A new wallet gets a 0.2 CC starter grant. To add more, send CC to `canton-agent-wallet address` and run `canton-agent-wallet claim`. Creating a wallet accepts the [Terms of Service](/terms).
 
-## CLI reference
+`--max` caps one payment and `--pay-to <party>` pins the payee. Without them `pay` pays whatever the 402 asks.
 
-All commands read the relay from `CANTON_AGENT_RELAY_URL` (or `--relay-url`).
-
-| Command | Does |
-|---|---|
-| `create` | Generate an Ed25519 key, allocate a Canton party, save to `~/.canton-agent/wallet.json`. |
-| `address` | Print the party id (share it to receive CC). |
-| `balance` | Show holdings (CC and any registry tokens). |
-| `claim` | Accept incoming transfers (e.g. initial funding). |
-| `pay <url>` | Fetch a URL, auto-paying any `402` challenge. |
-| `withdraw --to <party> [--amount <cc>]` | Send CC out. `--amount` is decimal CC (`5.0` = 5 CC); omit it to send the full balance. |
-| `export` / `import` | Back up / restore the wallet key (`export` prints the private key). |
-
-For POST bodies (e.g. LLM inference), use `makePayingFetch` from the SDK instead of `pay`.
-
-## SDK usage
+## Code
 
 ```typescript
 import { makePayingFetch } from "@ftptech/canton-agent-wallet";
 
 const payFetch = await makePayingFetch({
   relayUrl: "https://facilitator.ftptech.xyz",
-  network:  "canton:mainnet",
+  network: "canton:mainnet",
+  maxPaymentValue: "0.5", // CC per payment
 });
 
-// Drop-in fetch: a 402 is detected, paid, and retried automatically
-const res = await payFetch("https://api.example.com/resource", {
-  method:  "POST",
-  headers: { "Content-Type": "application/json" },
-  body:    JSON.stringify({ prompt: "hello" }),
-});
+const res = await payFetch("https://api.example.com/resource"); // 402 is paid and retried
 ```
 
-## Registry tokens (e.g. USDCx)
+It works like `fetch`, POST bodies included. `expectedPayTo` pins the payee; `maxPaymentValueByInstrument` caps a token.
 
-The wallet handles CIP-56 registry tokens alongside CC, with two safe-by-default opt-ins:
+## MCP
 
-- **Receive:** trust a token's registrar with `CANTON_AGENT_REGISTRY_TRUSTED_PARTIES` (USDCx is built in). Untrusted registrars' transfers are skipped by `claim`.
-- **Spend:** consent with `CANTON_AGENT_PAYABLE_INSTRUMENTS="<registrar>::1220...|USDCx"` (default: CC only), so a merchant cannot make you pay in a token you did not opt into.
+**Hosted.** Connect `https://pay.ftptech.xyz/mcp` as a custom connector in Claude, ChatGPT (developer mode) or Perplexity and sign in with a passkey. FTP holds the wallet for you; limits default to 5 CC per payment and 20 CC per day. Steps: [ftptech.xyz/mcp](https://www.ftptech.xyz/mcp).
+
+**Local, self-custody:**
 
 ```bash
-# receive USDCx directly (self-provision your own registry preapproval), then claim it
-canton-agent-wallet preapproval --admin <registrar>::1220... --id USDCx
-canton-agent-wallet claim
-
-# pay an endpoint priced in USDCx (opt in to spending first)
-export CANTON_AGENT_PAYABLE_INSTRUMENTS="<registrar>::1220...|USDCx"
-canton-agent-wallet pay https://api.example.com/resource
+claude mcp add canton-x402 -- npx -y @ftptech/canton-x402-mcp \
+  --relay-url https://facilitator.ftptech.xyz \
+  --allow-domains api.example.com \
+  --max-per-tx 1 --daily-cap 2
 ```
 
-`pay` needs no `--admin`/`--id` - the instrument comes from the merchant's 402; you only opt in to spending it.
+The flags are the spend policy and the agent cannot change them. Without `--allow-domains` every payment is refused. Tools: `get_address`, `get_balance`, `request_funding`, `claim`, `pay`, `withdraw`, `swap`.
 
-## Reference
+## Tokens
 
-**Environment variables**
+Paying in a token needs your consent:
 
-| Variable | Description |
+```bash
+export CANTON_AGENT_PAYABLE_INSTRUMENTS="decentralized-usdc-interchain-rep::12208115f1e168dd7e792320be9c4ca720c751a02a3053c7606e1c1cd3dad9bf60ef|USDCx"
+canton-agent-wallet pay --asset USDCx --max 1 https://api.example.com/resource
+```
+
+To receive a token, create its preapproval once: `canton-agent-wallet preapproval --admin <registrar> --id USDCx`. Registrars are in [MainNet values](/x402-payments#mainnet-values).
+
+## Commands
+
+| Command | Does |
 |---|---|
-| `CANTON_AGENT_RELAY_URL` | Facilitator URL (alternative to `--relay-url`). |
-| `CANTON_AGENT_NETWORK` | Canton network (default `canton:testnet`). |
-| `CANTON_AGENT_API_KEY` | API key, if the facilitator requires one. |
-| `CANTON_AGENT_REGISTRY_TRUSTED_PARTIES` | Registrars trusted to verify/claim CIP-56 tokens (USDCx built in). |
-| `CANTON_AGENT_PAYABLE_INSTRUMENTS` | Registry tokens you consent to spend (default: CC only). |
-| `HTTPS_PROXY` | HTTP proxy for outbound requests. |
+| `create --relay-url <url>` | Create the wallet (once) |
+| `address` | Your party id, to receive funds |
+| `balance` | Holdings of every token |
+| `claim` | Accept incoming transfers |
+| `pay [--max <n>] [--pay-to <party>] [--asset <SYM>] <url>` | Fetch a URL and pay its 402 |
+| `withdraw --to <party> --amount <n>` | Send CC, or a token with `--admin` and `--id`. Without `--amount` it sends everything |
+| `swap --in CC --out USDCx --amount <n>` | Swap CC and a registry token |
+| `export` / `import` | Back up or restore the key |
 
-**Wallet file** - `~/.canton-agent/wallet.json`, mode `0600`, holds the Ed25519 key and party id. Back it up; losing it loses the funds it holds.
+All commands and options: [agent-wallet README](https://github.com/FTP-Tech-LLC/x402-canton-agent/tree/main/packages/agent-wallet).
 
-**First-request latency** - the first payment after a cold start warms the SV Scan caches (`AmuletRules` 5 min TTL, `OpenMiningRound` 30 s TTL); subsequent payments typically complete in 10 to 25 seconds on mainnet.
+## Good to know
+
+- **The key is the money.** It lives in `~/.canton-agent/wallet.json`. Back it up with `export`.
+- **Do not retry a payment in a loop.** After a timeout or error, check `balance` first: the payment may have gone through.
+- **Behind a proxy**, set `HTTPS_PROXY` for the CLI.
