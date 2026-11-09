@@ -85,6 +85,8 @@ The previous facilitator party, `FTP-validator-1::1220c065ad977ae4e480b6ea5bcd96
 | `invalid_exact_canton_insufficient_balance`, `_insufficient_inputs` | Nothing moved. Fund the wallet. |
 | `invalid_exact_canton_input_contention` | Nothing moved. Safe to pay again. |
 | `invalid_exact_canton_execute_failed` | The outcome may be unknown. Do not pay again before checking the balance. |
+| `invalid_exact_canton_payment_already_settled` | This payment already settled; the answer carries its `updateId`. Never pay again for it. |
+| `settlement_pending`, `settle_outcome_unknown` (HTTP 503 from `/settle`) | The facilitator relayed the payment and has not read the outcome yet. Retry `/settle` with the same payment. |
 | `invalid_exact_canton_missing_proof`, `_malformed_payload`, `_signature_invalid` | Client bug or outdated client. Upgrade it. |
 | `unexpected_canton_ledger_error` | Check `network` and `assetTransferMethod`. |
 

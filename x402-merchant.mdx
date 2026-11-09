@@ -100,6 +100,7 @@ export const GET = withCantonPayment(
   cantonPaymentMiddleware({ facilitatorUrl, routes, redeemed });
   ```
 - **Header size.** The payment header is 8 to 10 KiB. Every proxy in front of your app must accept 16 KiB: nginx `large_client_header_buffers 4 16k;`, Node `--max-http-header-size=32768`.
-- **Settlement runs before your handler.** If your handler fails afterwards, the payer has already paid.
+- **Route keys are literal.** Use `"METHOD /path"`; a pattern (`:id`, `*`) is refused at startup.
+- **Settlement runs before your handler.** If the handler answers 5xx or throws, the payment is given back and the payer retries the same payment without paying again.
 - **Busy wallet.** Every payment adds a holding. Run `canton-agent-wallet merge` now and then.
 - **`feePayer` set before 2026-09-29?** Switch it to the value above.

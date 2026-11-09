@@ -13,9 +13,11 @@ canton-agent-wallet create --relay-url https://facilitator.ftptech.xyz
 canton-agent-wallet pay --max 0.5 https://api.example.com/resource
 ```
 
-A new wallet gets a 0.2 CC starter grant. To add more, send CC to `canton-agent-wallet address` and run `canton-agent-wallet claim`. Creating a wallet accepts the [Terms of Service](/terms).
+The relay sends a new wallet a 0.2 CC starter grant, within its per-IP and daily limits. To add more, send CC to `canton-agent-wallet address` and run `canton-agent-wallet claim`. Creating a wallet accepts the [Terms of Service](/terms).
 
-`--max` caps one payment and `--pay-to <party>` pins the payee. Without them `pay` pays whatever the 402 asks.
+`--max` caps one payment in CC (in the token's unit with `--asset`) and `--pay-to <party>` pins the payee. Without them `pay` pays whatever the 402 asks.
+
+If a payment was signed and the request does not end in a 2xx, `pay` exits 2: the payment may have settled. Check `balance` before paying again. Exit 1 means nothing was signed.
 
 ## Code
 
