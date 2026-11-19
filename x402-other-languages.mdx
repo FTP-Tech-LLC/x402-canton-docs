@@ -1,0 +1,90 @@
+---
+title: "Other languages"
+description: "Take x402 payments in Go and Python with FTP's plugins for the official x402 SDKs."
+---
+
+FTP's plugins add Canton to the official [x402 SDKs](https://github.com/x402-foundation/x402) for Go and Python. Payments settle through FTP's facilitator. The payer is charged only after your handler answered 2xx, and each payment is served once.
+
+## Before you start
+
+The party you are paid to needs a live `TransferPreapproval`. Create it with the Node wallet, as on the [merchant page](/x402-merchant):
+
+```bash
+npx @ftptech/canton-agent-wallet create --relay-url https://facilitator.ftptech.xyz
+npx @ftptech/canton-agent-wallet address       # your party id: payTo
+# send it a few CC, then
+npx @ftptech/canton-agent-wallet claim
+npx @ftptech/canton-agent-wallet preapproval   # lasts 30 days, run it again before then
+```
+
+## Go
+
+```bash
+go get github.com/FTP-Tech-LLC/x402-canton-merchant/go/canton
+```
+
+Needs Go 1.26.10 or newer and the official SDK `github.com/x402-foundation/x402/go/v2` v2.31.0 or newer. Works with `net/http` and routers in front of or behind it (chi, gorilla mux).
+
+```go
+gate, err := canton.NewMiddleware(context.Background(), canton.Config{
+	Routes: map[string]canton.Route{
+		"GET /v1/data": {PayTo: "<your party id>", Price: canton.CC("0.01")},
+	},
+})
+if err != nil {
+	log.Fatal(err)
+}
+mux := http.NewServeMux()
+mux.HandleFunc("GET /v1/data", func(w http.ResponseWriter, r *http.Request) {
+	payer, _ := canton.PayerFrom(r.Context())
+	_, _ = w.Write([]byte(`{"payer":"` + payer + `"}`))
+})
+log.Fatal(http.ListenAndServe(":8080", gate(mux)))
+```
+
+Routes are literal `"METHOD /path"` keys; register each handler with the same method and path. The [module README](https://github.com/FTP-Tech-LLC/x402-canton-merchant/tree/main/go) covers prices in CIP-56 tokens, the Redis store and shutdown.
+
+## Python
+
+```bash
+pip install "ftptech-x402-canton @ git+https://github.com/FTP-Tech-LLC/x402-canton-merchant@python/v0.1.0#subdirectory=python"
+```
+
+Needs Python 3.10 or newer and the official SDK `x402` 2.28. Works with FastAPI and Starlette (ASGI) and Flask (WSGI).
+
+```python
+server = CantonServer(Config(routes={
+    "GET /v1/data": Route(pay_to="<your party id>", price=cc("0.01")),
+}))
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await server.astart()
+    yield
+    await server.aclose()
+
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(CantonPaymentMiddleware, server=server)
+
+@app.get("/v1/data")
+def data(request: Request) -> dict:
+    return {"payer": payer_from(request)}
+```
+
+Flask: `app.wsgi_app = CantonWSGIMiddleware(app.wsgi_app, canton_server_sync(config))`. The [package README](https://github.com/FTP-Tech-LLC/x402-canton-merchant/tree/main/python) has the full examples, the supported servers and the Redis store.
+
+## Money safety
+
+- A 4xx or 5xx from your handler is not charged. Answer 429 for an over-limit payer. A 3xx becomes 502 and is not charged.
+- A replay of a served payment gets 402 `payment_already_redeemed`.
+- 503 `do NOT pay again; retry the same payment` means the payment may have moved. The client resends the same signature and is served once. The retry runs your handler again, so make paid side effects idempotent per payment.
+- Run more than one instance only with the shared Redis store. The default memory store forgets everything on restart.
+- Limit per payer (`canton.PayerFrom`, `payer_from`), not only per IP: the hosted MCP calls from one IP.
+
+## Deployment
+
+- Proxies must accept a `PAYMENT-SIGNATURE` header of 32 KiB. nginx: `large_client_header_buffers 4 32k;`.
+- Compress at the proxy. A response wrapper in front of the plugin (gzip, logging) must implement `Unwrap() http.ResponseWriter`, or a failed delivery after the charge looks delivered.
+- Use the plugin's request budget (Go `canton.RequestBudget(cfg)`, 505 s with defaults; Python `request_budget(config)`, 455 s) as the minimum for your proxy's read timeout and for the shutdown grace.
+- Python servers: run gunicorn with `--limit-request-field_size=32768`, `--timeout=460` and `--graceful-timeout=460`, set waitress `channel_request_lookahead=1`, and end TLS at a proxy in front.
+- Your handler must finish within the payment's lifetime, 120 s by default. A slower one gets its payment expired, and nothing is charged.
