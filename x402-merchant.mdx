@@ -87,6 +87,43 @@ export const GET = withCantonPayment(
 );
 ```
 
+## Official x402 SDK
+
+Already on the official x402 SDK? You can build it yourself with `@x402/express` and `@x402/canton`, settled by FTP's facilitator:
+
+```typescript
+// with `app` and `DSO` from the Express example
+import { paymentMiddleware, x402ResourceServer } from "@x402/express";
+import { HTTPFacilitatorClient } from "@x402/core/server";
+import { ExactCantonScheme } from "@x402/canton/exact/server";
+
+const facilitator = new HTTPFacilitatorClient({ url: "https://facilitator.ftptech.xyz" });
+const server = new x402ResourceServer(facilitator).register("canton:mainnet", new ExactCantonScheme());
+
+app.use(
+  paymentMiddleware(
+    {
+      "GET /api/data": {
+        accepts: [
+          {
+            scheme: "exact",
+            network: "canton:mainnet",
+            payTo: "<your party id>",
+            maxTimeoutSeconds: 120,
+            price: {
+              amount: "100000000", // 0.01 CC
+              asset: "CC",
+              extra: { instrumentId: { admin: DSO, id: "Amulet" }, executeBeforeSeconds: 120 },
+            },
+          },
+        ],
+      },
+    },
+    server,
+  ),
+);
+```
+
 ## Good to know
 
 - **Keep the preapproval live.** Without it payers get `402 invalid_exact_canton_preapproval_missing`. `preapproval --status` shows the expiry, `preapproval --force` renews early, and `--days 180` buys a longer one (about 0.016 CC per day).
